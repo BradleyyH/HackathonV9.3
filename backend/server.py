@@ -126,7 +126,7 @@ class GameServer:
                             'score': self.game.score
                         })
     
-    async def handle_client(self, websocket, path):
+    async def handle_client(self, websocket, path=None):
         """Handle a new client connection."""
         client_type = None
         player_id = None
@@ -185,7 +185,11 @@ async def main():
     print("Starting WebSocket server on ws://localhost:8765")
     print("Host should connect first, then fruit players can join")
     
-    async with websockets.serve(server.handle_client, "localhost", 8765):
+    # Create a wrapper function to handle the websocket connection
+    async def handler(websocket, path=None):
+        await server.handle_client(websocket, path)
+    
+    async with websockets.serve(handler, "localhost", 8765):
         await asyncio.Future()  # run forever
 
 if __name__ == "__main__":
