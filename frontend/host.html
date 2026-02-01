@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Snake Game - Host</title>
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            height: 100%;
+            width: 100%;
+        }
+        
+        body {
+            padding: 20px;
+            font-family: Arial, sans-serif;
+            background-color: #1a1a1a;
+            color: white;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            box-sizing: border-box;
+        }
+        
+        h1 {
+            margin-bottom: 10px;
+        }
+        
+        #status {
+            margin-bottom: 20px;
+            padding: 10px;
+            background-color: #333;
+            border-radius: 5px;
+        }
+        
+        #gameCanvas {
+            border: 3px solid #555;
+            background-color: #000;
+        }
+        
+        #score {
+            margin-top: 20px;
+            font-size: 24px;
+            font-weight: bold;
+        }
+        
+        #gameOver {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: rgba(0, 0, 0, 0.9);
+            padding: 30px;
+            border-radius: 10px;
+            text-align: center;
+            display: none;
+        }
+        
+        #gameOver h2 {
+            margin-top: 0;
+        }
+        
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            margin-top: 10px;
+        }
+        
+        button:hover {
+            background-color: #45a049;
+        }
+        
+        .container {
+            position: relative;
+        }
+    </style>
+</head>
+<body>
+    <h1>Snake Game - Host</h1>
+    <div id="status">Connecting to server...</div>
+    <div class="container">
+        <canvas id="gameCanvas" width="600" height="600"></canvas>
+        <div id="gameOver">
+            <h2>Game Over!</h2>
+            <p>Final Score: <span id="finalScore">0</span></p>
+            <button onclick="resetGame()">Play Again</button>
+        </div>
+    </div>
+    <div id="score">Score: 0</div>
+    <p>Use arrow keys to control the snake</p>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const statusDiv = document.getElementById('status');
+        const scoreDiv = document.getElementById('score');
+        const gameOverDiv = document.getElementById('gameOver');
+        const finalScoreSpan = document.getElementById('finalScore');
+
+        let ws = null;
+        let gameState = null;
+        let gridWidth = 20;
+        let gridHeight = 20;
+        let tileSize = 30;
+
+        // Colors
+        const greenDark = '#228B22';
+        const greenLight = '#90EE90';
+        const snakeColor = '#FFFF00';
+        const fruitColor = '#FF0000';
+        const borderColor = '#000000';
+
+        function connect() {
+            ws = new WebSocket('ws://localhost:8765');
+            
+            ws.onopen = () => {
+                statusDiv.textContent = 'Connected! Registering as host...';
+                // Register as host
+                ws.send(JSON.stringify({ type: 'host' }));
+            };
+
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                
+                if (data.type === 'host_registered') {
+                    statusDiv.textContent = 'Host registered! Waiting for game to start...';
+                } else if (data.type === 'game_state') {
+                    gameState = data;
+                    gridWidth = data.grid_width;
+                    gridHeight = data.grid_height;
+                    tileSize = canvas.width / gridWidth;
+                    draw();
+                } else if (data.type === 'game_over') {
+                    finalScoreSpan.textContent = data.score;
+                    gameOverDiv.style.display = 'block';
+                }
+            };
+
+            ws.onerror = (error) => {
+                statusDiv.textContent = 'Connection error. Make sure the server is running.';
+                console.error('WebSocket error:', error);
+            };
+
+            ws.onclose = () => {
+                statusDiv.textContent = 'Disconnected from server.';
+            };
+        }
+
+        function draw() {
+            if (!gameState) return;
+
+            // Clear canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Draw checkerboard
+            for (let y = 0; y < gridHeight; y++) {
+                for (let x = 0; x < gridWidth; x++) {
+                    const color = (x + y) % 2 === 0 ? greenLight : greenDark;
+                    ctx.fillStyle = color;
+                    ctx.fillRect(x * tileSize, y * tileSize, tileSize, tileSize);
+                }
+            }
+
+            // Draw fruits
+            ctx.fillStyle = fruitColor;
+            for (const [playerId, pos] of Object.entries(gameState.fruits)) {
+                const [x, y] = pos;
+                ctx.fillRect(x * tileSize, y * tileSize, tileSize, tileSize);
+                ctx.strokeStyle = borderColor;
+                ctx.lineWidth = 1;
+                ctx.strokeRect(x * tileSize, y * tileSize, tileSize, tileSize);
+            }
+
+            // Draw snake
+            ctx.fillStyle = snakeColor;
+            for (const [x, y] of gameState.snake) {
+                ctx.fillRect(x * tileSize, y * tileSize, tileSize, tileSize);
+                ctx.strokeStyle = borderColor;
+                ctx.lineWidth = 1;
+                ctx.strokeRect(x * tileSize, y * tileSize, tileSize, tileSize);
+            }
+
+            // Update score
+            scoreDiv.textContent = `Score: ${gameState.score}`;
+        }
+
+        // Handle keyboard input
+        const pressedKeys = {};
+        document.addEventListener('keydown', (e) => {
+            // Prevent default behavior for arrow keys to stop page scrolling
+            if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+                e.preventDefault();
+            }
+            
+            if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+            let direction = null;
+            if (e.key === 'ArrowUp' && !pressedKeys['ArrowDown']) {
+                direction = 'UP';
+            } else if (e.key === 'ArrowDown' && !pressedKeys['ArrowUp']) {
+                direction = 'DOWN';
+            } else if (e.key === 'ArrowLeft' && !pressedKeys['ArrowRight']) {
+                direction = 'LEFT';
+            } else if (e.key === 'ArrowRight' && !pressedKeys['ArrowLeft']) {
+                direction = 'RIGHT';
+            }
+
+            if (direction) {
+                pressedKeys[e.key] = true;
+                ws.send(JSON.stringify({ type: 'direction', direction }));
+            }
+        });
+
+        document.addEventListener('keyup', (e) => {
+            delete pressedKeys[e.key];
+        });
+
+        function resetGame() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'reset' }));
+                gameOverDiv.style.display = 'none';
+            }
+        }
+
+        // Connect on page load
+        connect();
+    </script>
+</body>
+</html>

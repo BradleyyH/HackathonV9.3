@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Snake Game - Fruit Player</title>
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            height: 100%;
+            width: 100%;
+        }
+        
+        body {
+            padding: 20px;
+            font-family: Arial, sans-serif;
+            background-color: #1a1a1a;
+            color: white;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            box-sizing: border-box;
+        }
+        
+        h1 {
+            margin-bottom: 10px;
+        }
+        
+        #status {
+            margin-bottom: 20px;
+            padding: 10px;
+            background-color: #333;
+            border-radius: 5px;
+        }
+        
+        #gameCanvas {
+            border: 3px solid #555;
+            background-color: #000;
+            cursor: crosshair;
+        }
+        
+        #instructions {
+            margin-top: 20px;
+            text-align: center;
+            max-width: 600px;
+        }
+        
+        #gameOver {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: rgba(0, 0, 0, 0.9);
+            padding: 30px;
+            border-radius: 10px;
+            text-align: center;
+            display: none;
+        }
+        
+        #gameOver h2 {
+            margin-top: 0;
+        }
+        
+        .container {
+            position: relative;
+        }
+        
+        .highlight {
+            color: #FFD700;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <h1>Snake Game - Fruit Player</h1>
+    <div id="status">Connecting to server...</div>
+    <div class="container">
+        <canvas id="gameCanvas" width="600" height="600"></canvas>
+        <div id="gameOver">
+            <h2>Game Over!</h2>
+            <p>The snake hit the border!</p>
+        </div>
+    </div>
+    <div id="instructions">
+        <p><span class="highlight">You are the red fruit!</span></p>
+        <p>Click anywhere on the board to move your fruit to that position.</p>
+        <p>Avoid the yellow snake - if it eats you, you'll respawn in a new location.</p>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const statusDiv = document.getElementById('status');
+        const gameOverDiv = document.getElementById('gameOver');
+
+        let ws = null;
+        let gameState = null;
+        let myPlayerId = null;
+        let gridWidth = 20;
+        let gridHeight = 20;
+        let tileSize = 30;
+
+        // Colors
+        const greenDark = '#228B22';
+        const greenLight = '#90EE90';
+        const snakeColor = '#FFFF00';
+        const fruitColor = '#FF0000';
+        const myFruitColor = '#FF6B6B'; // Slightly different color for your fruit
+        const borderColor = '#000000';
+
+        function connect() {
+            ws = new WebSocket('ws://localhost:8765');
+            
+            ws.onopen = () => {
+                statusDiv.textContent = 'Connected! Registering as fruit player...';
+                // Register as fruit player
+                ws.send(JSON.stringify({ type: 'fruit_player' }));
+            };
+
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                
+                if (data.type === 'player_registered') {
+                    myPlayerId = data.player_id;
+                    gridWidth = data.grid_width;
+                    gridHeight = data.grid_height;
+                    tileSize = canvas.width / gridWidth;
+                    statusDiv.textContent = `Registered! Your Player ID: ${myPlayerId.substring(0, 8)}...`;
+                } else if (data.type === 'game_state') {
+                    gameState = data;
+                    draw();
+                } else if (data.type === 'game_over') {
+                    gameOverDiv.style.display = 'block';
+                }
+            };
+
+            ws.onerror = (error) => {
+                statusDiv.textContent = 'Connection error. Make sure the server is running.';
+                console.error('WebSocket error:', error);
+            };
+
+            ws.onclose = () => {
+                statusDiv.textContent = 'Disconnected from server.';
+            };
+        }
+
+        function draw() {
+            if (!gameState) return;
+
+            // Clear canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Draw checkerboard
+            for (let y = 0; y < gridHeight; y++) {
+                for (let x = 0; x < gridWidth; x++) {
+                    const color = (x + y) % 2 === 0 ? greenLight : greenDark;
+                    ctx.fillStyle = color;
+                    ctx.fillRect(x * tileSize, y * tileSize, tileSize, tileSize);
+                }
+            }
+
+            // Draw fruits
+            for (const [playerId, pos] of Object.entries(gameState.fruits)) {
+                const [x, y] = pos;
+                // Use different color for your fruit
+                ctx.fillStyle = playerId === myPlayerId ? myFruitColor : fruitColor;
+                ctx.fillRect(x * tileSize, y * tileSize, tileSize, tileSize);
+                ctx.strokeStyle = borderColor;
+                ctx.lineWidth = 1;
+                ctx.strokeRect(x * tileSize, y * tileSize, tileSize, tileSize);
+            }
+
+            // Draw snake
+            ctx.fillStyle = snakeColor;
+            for (const [x, y] of gameState.snake) {
+                ctx.fillRect(x * tileSize, y * tileSize, tileSize, tileSize);
+                ctx.strokeStyle = borderColor;
+                ctx.lineWidth = 1;
+                ctx.strokeRect(x * tileSize, y * tileSize, tileSize, tileSize);
+            }
+        }
+
+        // Handle mouse clicks to move fruit
+        canvas.addEventListener('click', (e) => {
+            if (!ws || ws.readyState !== WebSocket.OPEN || !gameState) return;
+
+            const rect = canvas.getBoundingClientRect();
+            const x = Math.floor((e.clientX - rect.left) / tileSize);
+            const y = Math.floor((e.clientY - rect.top) / tileSize);
+
+            // Validate coordinates
+            if (x >= 0 && x < gridWidth && y >= 0 && y < gridHeight) {
+                ws.send(JSON.stringify({
+                    type: 'move',
+                    x: x,
+                    y: y
+                }));
+            }
+        });
+
+        // Connect on page load
+        connect();
+    </script>
+</body>
+</html>
